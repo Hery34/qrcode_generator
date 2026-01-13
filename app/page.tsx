@@ -45,8 +45,47 @@ export default function Home() {
     if (qrRef.current) {
       const svg = qrRef.current.querySelector('svg');
       if (svg) {
-        const svgData = new XMLSerializer().serializeToString(svg);
-        const blob = new Blob([svgData], { type: 'image/svg+xml' });
+        // Cloner le SVG pour ne pas modifier l'original
+        const svgClone = svg.cloneNode(true) as SVGElement;
+        
+        // Récupérer les dimensions du SVG
+        const width = svg.getAttribute('width') || '256';
+        const height = svg.getAttribute('height') || '256';
+        const viewBox = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`;
+        const size = Number(width);
+        
+        // Créer un nouveau SVG avec les bons attributs et namespaces
+        const newSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        newSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        newSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+        newSvg.setAttribute('width', width);
+        newSvg.setAttribute('height', height);
+        newSvg.setAttribute('viewBox', viewBox);
+        
+        // Ajouter le contenu du QR code
+        while (svgClone.firstChild) {
+          newSvg.appendChild(svgClone.firstChild);
+        }
+        
+        // Ajouter le logo si présent
+        if (logo) {
+          const logoImg = qrRef.current.querySelector('img');
+          if (logoImg) {
+            const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+            // Utiliser xlink:href pour compatibilité maximale
+            image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', logo);
+            image.setAttribute('x', String(size / 2 - 32));
+            image.setAttribute('y', String(size / 2 - 32));
+            image.setAttribute('width', '64');
+            image.setAttribute('height', '64');
+            image.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+            newSvg.appendChild(image);
+          }
+        }
+        
+        // Sérialiser le SVG complet avec l'en-tête XML
+        const svgData = `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(newSvg)}`;
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.download = 'qrcode.svg';
