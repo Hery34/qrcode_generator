@@ -69,18 +69,44 @@ export default function Home() {
         
         // Ajouter le logo si présent
         if (logo) {
-          const logoImg = qrRef.current.querySelector('img');
-          if (logoImg) {
-            const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-            // Utiliser xlink:href pour compatibilité maximale
-            image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', logo);
-            image.setAttribute('x', String(size / 2 - 32));
-            image.setAttribute('y', String(size / 2 - 32));
-            image.setAttribute('width', '64');
-            image.setAttribute('height', '64');
-            image.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-            newSvg.appendChild(image);
-          }
+          // Parser le viewBox pour obtenir les dimensions réelles
+          const viewBoxValues = viewBox.split(' ').map(Number);
+          const viewBoxWidth = viewBoxValues[2] || size;
+          const viewBoxHeight = viewBoxValues[3] || size;
+          
+          // Convertir les pixels en unités viewBox
+          // Si le SVG fait 256px et le viewBox est 25, alors 1 unité = 256/25 = 10.24px
+          const logoSizePx = 64; // Taille du logo en pixels
+          const paddingPx = 4; // Padding autour du logo en pixels
+          const scaleX = viewBoxWidth / size;
+          const scaleY = viewBoxHeight / size;
+          const logoSize = logoSizePx * scaleX; // Taille en unités viewBox
+          const padding = paddingPx * scaleX; // Padding en unités viewBox
+          
+          // Centrer le logo dans le viewBox
+          const logoX = (viewBoxWidth / 2) - (logoSize / 2);
+          const logoY = (viewBoxHeight / 2) - (logoSize / 2);
+          
+          // Ajouter un rectangle blanc avec coins arrondis pour le fond du logo
+          const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          rect.setAttribute('x', String(logoX - padding));
+          rect.setAttribute('y', String(logoY - padding));
+          rect.setAttribute('width', String(logoSize + padding * 2));
+          rect.setAttribute('height', String(logoSize + padding * 2));
+          rect.setAttribute('rx', String(padding)); // Coins arrondis proportionnels
+          rect.setAttribute('fill', '#ffffff');
+          newSvg.appendChild(rect);
+          
+          // Ajouter l'image du logo
+          const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+          // Utiliser xlink:href pour compatibilité maximale
+          image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', logo);
+          image.setAttribute('x', String(logoX));
+          image.setAttribute('y', String(logoY));
+          image.setAttribute('width', String(logoSize));
+          image.setAttribute('height', String(logoSize));
+          image.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+          newSvg.appendChild(image);
         }
         
         // Sérialiser le SVG complet avec l'en-tête XML
