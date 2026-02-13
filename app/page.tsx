@@ -5,17 +5,32 @@ import QRCode from 'react-qr-code';
 import html2canvas from 'html2canvas';
 
 export default function Home() {
-  const [text, setText] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [baseUrl, setBaseUrl] = useState('https://livraison-v-2.vercel.app/');
+  const [siteParam, setSiteParam] = useState('MTP');
   const [qrColor, setQrColor] = useState('#DC2626');
   const [logo, setLogo] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
 
   const getQRValue = () => {
-    if (phoneNumber) {
-      return `tel:${phoneNumber}`;
+    const fallbackBase = 'https://livraison-v-2.vercel.app/';
+    const safeBase = (baseUrl || '').trim() || fallbackBase;
+    const safeSite = (siteParam || '').trim();
+    try {
+      const url = new URL(safeBase);
+      if (safeSite) {
+        url.searchParams.set('site', safeSite);
+      } else {
+        url.searchParams.delete('site');
+      }
+      return url.toString();
+    } catch {
+      // Fallback to simple concatenation if base URL is invalid
+      if (!safeSite) {
+        return safeBase;
+      }
+      const separator = safeBase.includes('?') ? '&' : '?';
+      return `${safeBase}${separator}site=${encodeURIComponent(safeSite)}`;
     }
-    return text || 'https://exemple.com';
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -139,31 +154,30 @@ export default function Home() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Texte personnalisé
+                  URL de base
                 </label>
                 <input
                   type="text"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="Entrez votre texte"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="https://livraison-v-2.vercel.app/"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 text-black"
-                  disabled={!!phoneNumber}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Numéro de téléphone
+                  Paramètre `site`
                 </label>
                 <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="+33612345678"
+                  type="text"
+                  value={siteParam}
+                  onChange={(e) => setSiteParam(e.target.value)}
+                  placeholder="MTP"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 text-black"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Format: +33612345678 (prioritaire sur le texte)
+                  Exemple: MTP
                 </p>
               </div>
 
