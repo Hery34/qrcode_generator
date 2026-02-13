@@ -7,9 +7,15 @@ import html2canvas from 'html2canvas';
 export default function Home() {
   const [baseUrl, setBaseUrl] = useState('https://livraison-v-2.vercel.app/');
   const [siteParam, setSiteParam] = useState('MTP');
+  const [fileName, setFileName] = useState('qrcode');
   const [qrColor, setQrColor] = useState('#DC2626');
   const [logo, setLogo] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
+
+  const getExportFileName = () => {
+    const cleaned = (fileName || '').trim();
+    return cleaned || 'qrcode';
+  };
 
   const getQRValue = () => {
     const fallbackBase = 'https://livraison-v-2.vercel.app/';
@@ -50,7 +56,7 @@ export default function Home() {
         backgroundColor: '#ffffff',
       });
       const link = document.createElement('a');
-      link.download = 'qrcode.png';
+      link.download = `${getExportFileName()}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
     }
@@ -129,7 +135,7 @@ export default function Home() {
         const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
-        link.download = 'qrcode.svg';
+        link.download = `${getExportFileName()}.svg`;
         link.href = url;
         link.click();
         URL.revokeObjectURL(url);
@@ -178,6 +184,22 @@ export default function Home() {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Exemple: MTP
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Nom du fichier
+                </label>
+                <input
+                  type="text"
+                  value={fileName}
+                  onChange={(e) => setFileName(e.target.value)}
+                  placeholder="montpellier"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 text-black"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Utilisé uniquement pour l&apos;export PNG/SVG
                 </p>
               </div>
 
