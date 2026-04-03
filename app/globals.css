@@ -1,26 +1,61 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #faf7f7;
+  --foreground: #0f172a;
+  --muted: #5b6474;
+  --card: rgba(255, 255, 255, 0.78);
+  /* Couleurs marque : définies sur `<body>` via `lib/brand.ts` → `brandCssVariables` */
+  --gradient-page: linear-gradient(135deg, var(--brand-cream) 0%, var(--brand-mist) 48%, #f8fafc 100%);
+  --gradient-card-light: linear-gradient(180deg, #fafafa 0%, #fff5f5 100%);
+  --gradient-hero: linear-gradient(135deg, var(--brand) 0%, var(--brand-deep) 100%);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-mist: var(--brand-mist);
+  --color-brand-cream: var(--brand-cream);
+  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "SF Mono", "Menlo", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+a,
+button,
+input,
+textarea,
+select {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+.font-mono {
+  font-family: "SFMono-Regular", "SF Mono", "Menlo", monospace;
 }

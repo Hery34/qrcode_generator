@@ -1,20 +1,11 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+import type { Metadata } from 'next';
+import type { CSSProperties } from 'react';
+import { BRAND_COMPANY_NAME, brandCssVariables } from '@/lib/brand';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "Générateur de QR Code",
-  description: "Générateur de QR code personnalisable avec export PNG/SVG",
+  title: `${BRAND_COMPANY_NAME} — QR & fiches`,
+  description: `Générateur de QR codes ${BRAND_COMPANY_NAME} avec fiche publique et export PNG/PDF.`,
 };
 
 export default function RootLayout({
@@ -23,10 +14,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    <html lang="fr">
+      <body className="antialiased" style={brandCssVariables as CSSProperties}>
         {children}
       </body>
     </html>

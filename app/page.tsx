@@ -1,631 +1,702 @@
 'use client';
 
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import QRCode from 'react-qr-code';
 import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import Image from 'next/image';
-import xkeyLinks from '@/data/xkey-links.json';
+import {
+  BRAND_ACCENT_HEX,
+  BRAND_COMPANY_NAME,
+  BRAND_DEFAULT_DESCRIPTION,
+  BRAND_DEFAULT_TAGLINE,
+  BRAND_LOGO_URL,
+  BRAND_WEBSITE_URL,
+} from '@/lib/brand';
+import { createBrowserSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
+import { buildPublicCardUrl, createSlug, sanitizeFileName } from '@/lib/utils';
+import type { BusinessCardInput, BusinessCardRow, BusinessContactInput } from '@/lib/types';
 
-const STORAGE_KEY = 'xkey-qr-manager-state';
-const ANDROID_DOWNLOAD_URL = xkeyLinks.android;
-
-type Platform = 'ios' | 'android';
-
-type LinkEntry = {
-  url: string;
-  code: string;
-  consumedAt: string | null;
-  importedAt: string;
+type FormState = {
+  slug: string;
+  companyTagline: string;
+  companyDescription: string;
+  addressLine1: string;
+  addressLine2: string;
+  postalCode: string;
+  city: string;
+  country: string;
+  companyPhone: string;
+  companyEmail: string;
+  contactFullName: string;
+  contactJobTitle: string;
+  contactEmail: string;
+  contactPhone: string;
+  contactMobile: string;
+  contactWebsite: string;
+  contactLinkedinUrl: string;
+  contactNotes: string;
 };
 
-type PersistedState = {
-  iosLinks: LinkEntry[];
-  selectedPlatform: Platform;
-  selectedIosUrl: string | null;
-  fileName: string;
-  qrColor: string;
-  logo: string | null;
+const defaultForm: FormState = {
+  slug: '',
+  companyTagline: BRAND_DEFAULT_TAGLINE,
+  companyDescription: BRAND_DEFAULT_DESCRIPTION,
+  addressLine1: '',
+  addressLine2: '',
+  postalCode: '',
+  city: '',
+  country: 'France',
+  companyPhone: '',
+  companyEmail: '',
+  contactFullName: '',
+  contactJobTitle: '',
+  contactEmail: '',
+  contactPhone: '',
+  contactMobile: '',
+  contactWebsite: '',
+  contactLinkedinUrl: '',
+  contactNotes: '',
 };
 
-const defaultState: PersistedState = {
-  iosLinks: [],
-  selectedPlatform: 'ios',
-  selectedIosUrl: null,
-  fileName: 'xkey-qrcode',
-  qrColor: '#DC2626',
-  logo: null,
-};
+const cardSelect = `
+  id,
+  slug,
+  company_name,
+  company_tagline,
+  company_description,
+  address_line_1,
+  address_line_2,
+  postal_code,
+  city,
+  country,
+  company_phone,
+  company_email,
+  company_website,
+  logo_url,
+  accent_color,
+  is_published,
+  created_at,
+  updated_at
+`;
 
-const getCodeFromUrl = (url: string) => {
-  try {
-    const parsed = new URL(url);
-    return parsed.searchParams.get('code') ?? '';
-  } catch {
-    return '';
-  }
-};
+function mapRowToForm(card: BusinessCardRow): FormState {
+  const primaryContact = card.business_contacts?.find((contact) => contact.is_primary) ?? card.business_contacts?.[0];
 
-const buildEntriesFromUrls = (
-  urls: string[],
-  previousEntries: LinkEntry[],
-  importedAtOverride?: string,
-) => {
-  const previousMap = new Map(previousEntries.map((entry) => [entry.url, entry]));
-  const importedAt = importedAtOverride ?? new Date().toISOString();
+  return {
+    slug: card.slug ?? '',
+    companyTagline: (card.company_tagline ?? '').trim() || BRAND_DEFAULT_TAGLINE,
+    companyDescription: (card.company_description ?? '').trim() || BRAND_DEFAULT_DESCRIPTION,
+    addressLine1: card.address_line_1 ?? '',
+    addressLine2: card.address_line_2 ?? '',
+    postalCode: card.postal_code ?? '',
+    city: card.city ?? '',
+    country: card.country ?? 'France',
+    companyPhone: card.company_phone ?? '',
+    companyEmail: card.company_email ?? '',
+    contactFullName: primaryContact?.full_name ?? '',
+    contactJobTitle: primaryContact?.job_title ?? '',
+    contactEmail: primaryContact?.email ?? '',
+    contactPhone: primaryContact?.phone ?? '',
+    contactMobile: primaryContact?.mobile ?? '',
+    contactWebsite: primaryContact?.website ?? '',
+    contactLinkedinUrl: primaryContact?.linkedin_url ?? '',
+    contactNotes: primaryContact?.notes ?? '',
+  };
+}
 
-  return urls.map((url) => {
-    const existing = previousMap.get(url);
-    return {
-      url,
-      code: getCodeFromUrl(url),
-      consumedAt: existing?.consumedAt ?? null,
-      importedAt: existing?.importedAt ?? importedAt,
-    };
-  });
-};
+function mapFormToCardInput(form: FormState): BusinessCardInput {
+  return {
+    slug: createSlug(form.slug),
+    company_name: BRAND_COMPANY_NAME,
+    company_tagline: form.companyTagline.trim() || null,
+    company_description: form.companyDescription.trim() || null,
+    address_line_1: form.addressLine1.trim() || null,
+    address_line_2: form.addressLine2.trim() || null,
+    postal_code: form.postalCode.trim() || null,
+    city: form.city.trim() || null,
+    country: form.country.trim() || null,
+    company_phone: form.companyPhone.trim() || null,
+    company_email: form.companyEmail.trim() || null,
+    company_website: BRAND_WEBSITE_URL,
+    logo_url: BRAND_LOGO_URL,
+    accent_color: BRAND_ACCENT_HEX,
+    is_published: true,
+  };
+}
 
-const downloadBlob = (content: BlobPart, fileName: string, type: string) => {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.download = fileName;
-  link.href = url;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-const BUNDLED_IOS_LINKS = buildEntriesFromUrls(xkeyLinks.ios, [], 'bundled-demo');
+function mapFormToContactInput(form: FormState, businessCardId: string): BusinessContactInput {
+  return {
+    business_card_id: businessCardId,
+    full_name: form.contactFullName.trim(),
+    job_title: form.contactJobTitle.trim() || null,
+    email: form.contactEmail.trim() || null,
+    phone: form.contactPhone.trim() || null,
+    mobile: form.contactMobile.trim() || null,
+    website: form.contactWebsite.trim() || null,
+    linkedin_url: form.contactLinkedinUrl.trim() || null,
+    notes: form.contactNotes.trim() || null,
+    is_primary: true,
+  };
+}
 
 export default function Home() {
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform>('ios');
-  const [iosLinks, setIosLinks] = useState<LinkEntry[]>(BUNDLED_IOS_LINKS);
-  const [selectedIosUrl, setSelectedIosUrl] = useState<string | null>(BUNDLED_IOS_LINKS[0]?.url ?? null);
-  const [fileName, setFileName] = useState(defaultState.fileName);
-  const [qrColor, setQrColor] = useState(defaultState.qrColor);
-  const [logo, setLogo] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string>(
-    'Les liens iOS sont embarqués dans le projet pour cette démonstration.',
-  );
-  const [isHydrated, setIsHydrated] = useState(false);
-  const qrRef = useRef<HTMLDivElement>(null);
+  const [form, setForm] = useState<FormState>(() => ({ ...defaultForm }));
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [recentCards, setRecentCards] = useState<BusinessCardRow[]>([]);
+  const [isPending, startTransition] = useTransition();
+  const [isLoadingCards, setIsLoadingCards] = useState(false);
+  const qrCardRef = useRef<HTMLDivElement>(null);
+  const supabaseReady = isSupabaseConfigured();
+  const publicUrl = form.slug ? buildPublicCardUrl(form.slug) : '';
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Partial<PersistedState>;
-        setSelectedPlatform(parsed.selectedPlatform === 'android' ? 'android' : 'ios');
-        const storedLinks = Array.isArray(parsed.iosLinks) && parsed.iosLinks.length > 0 ? parsed.iosLinks : BUNDLED_IOS_LINKS;
-        setIosLinks(storedLinks);
-        setSelectedIosUrl(parsed.selectedIosUrl ?? storedLinks[0]?.url ?? null);
-        setFileName(parsed.fileName?.trim() || defaultState.fileName);
-        setQrColor(parsed.qrColor || defaultState.qrColor);
-        setLogo(parsed.logo ?? null);
-      } else {
-        setIosLinks(BUNDLED_IOS_LINKS);
-        setSelectedIosUrl(BUNDLED_IOS_LINKS[0]?.url ?? null);
+    if (!supabaseReady) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadCards() {
+      setIsLoadingCards(true);
+      const supabase = createBrowserSupabaseClient();
+
+      const { data, error } = await supabase
+        .from('business_cards')
+        .select(`${cardSelect}, business_contacts (*)`)
+        .order('updated_at', { ascending: false })
+        .limit(6);
+
+      if (isCancelled) {
+        return;
       }
-    } catch {
-      // Ignore invalid local storage data.
-    } finally {
-      setIsHydrated(true);
-    }
-  }, []);
 
-  useEffect(() => {
-    if (!isHydrated) {
-      return;
+      if (error) {
+        setFeedback(`Impossible de charger les fiches : ${error.message}`);
+      } else {
+        setRecentCards((data as BusinessCardRow[]) ?? []);
+      }
+
+      setIsLoadingCards(false);
     }
 
-    const state: PersistedState = {
-      iosLinks,
-      selectedPlatform,
-      selectedIosUrl,
-      fileName,
-      qrColor,
-      logo,
+    void loadCards();
+
+    return () => {
+      isCancelled = true;
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [fileName, iosLinks, isHydrated, logo, qrColor, selectedIosUrl, selectedPlatform]);
+  }, [supabaseReady]);
 
-  const availableIosLinks = useMemo(
-    () => iosLinks.filter((entry) => !entry.consumedAt),
-    [iosLinks],
-  );
-  const consumedIosLinks = useMemo(
-    () => iosLinks.filter((entry) => Boolean(entry.consumedAt)),
-    [iosLinks],
-  );
-
-  useEffect(() => {
-    if (selectedPlatform !== 'ios') {
-      return;
-    }
-
-    const currentEntry = iosLinks.find((entry) => entry.url === selectedIosUrl);
-    if (currentEntry) {
-      return;
-    }
-
-    setSelectedIosUrl(availableIosLinks[0]?.url ?? iosLinks[0]?.url ?? null);
-  }, [availableIosLinks, iosLinks, selectedIosUrl, selectedPlatform]);
-
-  const currentIosEntry = useMemo(
-    () => iosLinks.find((entry) => entry.url === selectedIosUrl) ?? null,
-    [iosLinks, selectedIosUrl],
-  );
-
-  const currentQrValue =
-    selectedPlatform === 'android' ? ANDROID_DOWNLOAD_URL : currentIosEntry?.url ?? '';
-
-  const exportBaseName = (fileName || '').trim() || 'xkey-qrcode';
-
-  const handleLogoUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (loadEvent) => {
-      setLogo(loadEvent.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+  const handleFieldChange = (field: keyof FormState, value: string) => {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
   };
 
-  const markCurrentLinkAsConsumed = () => {
-    if (!currentIosEntry) {
+  const refreshRecentCards = async (focusId?: string) => {
+    if (!supabaseReady) {
       return;
     }
 
-    const consumedAt = new Date().toISOString();
-    const nextEntries = iosLinks.map((entry) =>
-      entry.url === currentIosEntry.url ? { ...entry, consumedAt } : entry,
-    );
-    const nextAvailable = nextEntries.find((entry) => !entry.consumedAt);
+    const supabase = createBrowserSupabaseClient();
+    const { data, error } = await supabase
+      .from('business_cards')
+      .select(`${cardSelect}, business_contacts (*)`)
+      .order('updated_at', { ascending: false })
+      .limit(6);
 
-    setIosLinks(nextEntries);
-    setSelectedIosUrl(nextAvailable?.url ?? currentIosEntry.url);
-    setStatusMessage(`Lien ${currentIosEntry.code || currentIosEntry.url} marqué comme consommé.`);
-  };
-
-  const restoreLink = (url: string) => {
-    const nextEntries = iosLinks.map((entry) =>
-      entry.url === url ? { ...entry, consumedAt: null } : entry,
-    );
-    setIosLinks(nextEntries);
-    setSelectedIosUrl(url);
-    setStatusMessage('Le lien a été remis dans la liste des disponibles.');
-  };
-
-  const goToNextAvailableLink = () => {
-    if (availableIosLinks.length === 0) {
-      setStatusMessage('Aucun lien disponible restant.');
+    if (error) {
+      setFeedback(`Fiche enregistrée, mais la liste n’a pas pu être rafraîchie : ${error.message}`);
       return;
     }
 
-    const currentAvailableIndex = availableIosLinks.findIndex((entry) => entry.url === selectedIosUrl);
-    const nextEntry =
-      currentAvailableIndex >= 0
-        ? availableIosLinks[currentAvailableIndex + 1] ?? availableIosLinks[0]
-        : availableIosLinks[0];
+    const nextCards = (data as BusinessCardRow[]) ?? [];
+    setRecentCards(nextCards);
 
-    setSelectedIosUrl(nextEntry.url);
-    setStatusMessage(`Lien suivant sélectionné: ${nextEntry.code || nextEntry.url}`);
-  };
-
-  const exportConsumedLinks = () => {
-    if (consumedIosLinks.length === 0) {
-      setStatusMessage('Aucun lien consommé à exporter pour le moment.');
+    if (!focusId) {
       return;
     }
 
-    const header = ['platform', 'code', 'url', 'consumedAt', 'importedAt'];
-    const rows = consumedIosLinks.map((entry) => [
-      'ios',
-      entry.code,
-      entry.url,
-      entry.consumedAt ?? '',
-      entry.importedAt,
-    ]);
-    const csv = [header, ...rows]
-      .map((row) =>
-        row
-          .map((cell) => `"${String(cell).replaceAll('"', '""')}"`)
-          .join(','),
-      )
-      .join('\n');
+    const focusedCard = nextCards.find((card) => card.id === focusId);
+    if (focusedCard) {
+      setForm(mapRowToForm(focusedCard));
+    }
+  };
 
-    downloadBlob(csv, `${exportBaseName}-consommes.csv`, 'text/csv;charset=utf-8');
-    setStatusMessage(`${consumedIosLinks.length} lien(s) consommé(s) exporté(s) en CSV.`);
+  const saveCard = () => {
+    if (!supabaseReady) {
+      setFeedback('Configuration Supabase manquante : impossible d’enregistrer.');
+      return;
+    }
+
+    const cardPayload = mapFormToCardInput(form);
+    if (!cardPayload.slug) {
+      setFeedback('Le slug public est obligatoire.');
+      return;
+    }
+
+    if (!form.contactFullName.trim()) {
+      setFeedback('Ajoute au moins un contact principal.');
+      return;
+    }
+
+    startTransition(() => {
+      void (async () => {
+        const supabase = createBrowserSupabaseClient();
+
+        const { data: savedCard, error: cardError } = await supabase
+          .from('business_cards')
+          .upsert(cardPayload, { onConflict: 'slug' })
+          .select(cardSelect)
+          .single();
+
+        if (cardError || !savedCard) {
+          setFeedback(`Enregistrement impossible : ${cardError?.message ?? 'réponse vide'}`);
+          return;
+        }
+
+        const cardId = savedCard.id;
+        const { data: existingContacts, error: contactLookupError } = await supabase
+          .from('business_contacts')
+          .select('id')
+          .eq('business_card_id', cardId)
+          .eq('is_primary', true)
+          .limit(1);
+
+        if (contactLookupError) {
+          setFeedback(`Fiche enregistrée, mais le contact principal n’a pas pu être synchronisé : ${contactLookupError.message}`);
+          await refreshRecentCards(cardId);
+          return;
+        }
+
+        const contactPayload = mapFormToContactInput(form, cardId);
+        if (existingContacts && existingContacts.length > 0) {
+          const { error: updateContactError } = await supabase
+            .from('business_contacts')
+            .update(contactPayload)
+            .eq('id', existingContacts[0].id);
+
+          if (updateContactError) {
+            setFeedback(`Fiche enregistrée, mais le contact principal n’a pas pu être mis à jour : ${updateContactError.message}`);
+            await refreshRecentCards(cardId);
+            return;
+          }
+        } else {
+          const { error: insertContactError } = await supabase
+            .from('business_contacts')
+            .insert(contactPayload);
+
+          if (insertContactError) {
+            setFeedback(`Fiche enregistrée, mais le contact principal n’a pas pu être créé : ${insertContactError.message}`);
+            await refreshRecentCards(cardId);
+            return;
+          }
+        }
+
+        setFeedback(`Fiche publiée : ${buildPublicCardUrl(savedCard.slug)}`);
+        await refreshRecentCards(cardId);
+      })();
+    });
+  };
+
+  const loadCardIntoForm = (card: BusinessCardRow) => {
+    setForm(mapRowToForm(card));
+    setFeedback(`Fiche « ${card.slug} » chargée.`);
+  };
+
+  const resetToNewCard = () => {
+    setForm({ ...defaultForm });
+    setFeedback('Nouvelle fiche : indique un slug public distinct pour créer une autre carte.');
   };
 
   const exportToPNG = async () => {
-    if (!qrRef.current || !currentQrValue) {
+    if (!qrCardRef.current || !publicUrl) {
       return;
     }
 
-    const canvas = await html2canvas(qrRef.current, {
-      backgroundColor: '#ffffff',
+    const canvas = await html2canvas(qrCardRef.current, {
+      backgroundColor: '#f8fafc',
+      scale: 2,
     });
     const link = document.createElement('a');
-    link.download = `${exportBaseName}.png`;
+    link.download = `${sanitizeFileName(form.slug || 'carte-qr')}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
   };
 
-  const exportToSVG = () => {
-    if (!qrRef.current || !currentQrValue) {
+  const exportToPDF = async () => {
+    if (!qrCardRef.current || !publicUrl) {
       return;
     }
 
-    const svg = qrRef.current.querySelector('svg');
-    if (!svg) {
-      return;
-    }
+    const canvas = await html2canvas(qrCardRef.current, {
+      backgroundColor: '#f8fafc',
+      scale: 2,
+    });
 
-    const svgClone = svg.cloneNode(true) as SVGElement;
-    const width = svg.getAttribute('width') || '256';
-    const height = svg.getAttribute('height') || '256';
-    const viewBox = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`;
-    const size = Number(width);
+    const imageData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
 
-    const newSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    newSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    newSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-    newSvg.setAttribute('width', width);
-    newSvg.setAttribute('height', height);
-    newSvg.setAttribute('viewBox', viewBox);
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imageWidth = pageWidth - 24;
+    const imageHeight = (canvas.height * imageWidth) / canvas.width;
+    const imageY = Math.max(16, (pageHeight - imageHeight) / 2);
 
-    while (svgClone.firstChild) {
-      newSvg.appendChild(svgClone.firstChild);
-    }
-
-    if (logo) {
-      const viewBoxValues = viewBox.split(' ').map(Number);
-      const viewBoxWidth = viewBoxValues[2] || size;
-      const logoSizePx = 64;
-      const paddingPx = 4;
-      const scaleX = viewBoxWidth / size;
-      const logoSize = logoSizePx * scaleX;
-      const padding = paddingPx * scaleX;
-      const logoX = viewBoxWidth / 2 - logoSize / 2;
-      const logoY = viewBoxWidth / 2 - logoSize / 2;
-
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('x', String(logoX - padding));
-      rect.setAttribute('y', String(logoY - padding));
-      rect.setAttribute('width', String(logoSize + padding * 2));
-      rect.setAttribute('height', String(logoSize + padding * 2));
-      rect.setAttribute('rx', String(padding));
-      rect.setAttribute('fill', '#ffffff');
-      newSvg.appendChild(rect);
-
-      const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-      image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', logo);
-      image.setAttribute('x', String(logoX));
-      image.setAttribute('y', String(logoY));
-      image.setAttribute('width', String(logoSize));
-      image.setAttribute('height', String(logoSize));
-      image.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-      newSvg.appendChild(image);
-    }
-
-    const svgData = `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(newSvg)}`;
-    downloadBlob(svgData, `${exportBaseName}.svg`, 'image/svg+xml;charset=utf-8');
+    pdf.addImage(imageData, 'PNG', 12, imageY, imageWidth, imageHeight);
+    pdf.save(`${sanitizeFileName(form.slug || 'carte-qr')}.pdf`);
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#fff1f2,_#ffe4e6_40%,_#fecdd3)] px-4 py-10">
+    <main className="min-h-screen px-4 py-10 text-slate-950" style={{ background: 'var(--gradient-page)' }}>
       <div className="mx-auto max-w-7xl">
-        <div className="mb-8 flex flex-col gap-3">
-          <span className="w-fit rounded-full border border-rose-200 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-rose-700">
-            XKey QR Manager
-          </span>
-          <h1 className="text-4xl font-semibold tracking-tight text-slate-900">
-            Génération QR par plateforme avec suivi des liens consommés
-          </h1>
-          <p className="max-w-3xl text-sm leading-6 text-slate-700">
-            Importez vos liens Apple uniques depuis Excel, choisissez la plateforme avant affichage du QR code,
-            marquez les liens utilisés, puis exportez la liste des consommés en CSV.
-          </p>
+        <div className="mb-10">
+          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-4xl">AnnexxCard QR code generator</h1>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.9fr_1fr]">
-          <section className="rounded-3xl border border-white/60 bg-white/85 p-6 shadow-[0_20px_80px_-30px_rgba(15,23,42,0.35)] backdrop-blur">
-            <div className="mb-5 flex items-center justify-between gap-4">
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.9fr_0.9fr]">
+          <section className="rounded-[2rem] border border-white/70 bg-white/80 p-6 shadow-[0_25px_90px_-40px_rgba(15,23,42,0.5)] backdrop-blur">
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Configuration</h2>
-                <p className="text-sm text-slate-600">La plateforme détermine le lien encodé dans le QR.</p>
+                <h2 className="text-2xl font-semibold tracking-[-0.03em]">Fiche entreprise</h2>
+                <p className="mt-1 text-sm text-slate-600">Les champs ci-dessous alimentent la page publique et le QR code.</p>
               </div>
-              <div className="rounded-full bg-rose-50 px-3 py-1 text-xs font-medium text-rose-700">
-                {selectedPlatform === 'ios' ? 'Mode iOS' : 'Mode Android'}
+              <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  onClick={resetToNewCard}
+                  disabled={isPending}
+                  className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Nouvelle fiche
+                </button>
+                <button
+                  type="button"
+                  onClick={saveCard}
+                  disabled={isPending}
+                  className="rounded-full bg-brand-ink px-5 py-3 text-sm font-medium text-white transition hover:bg-brand-deep disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {isPending ? 'Enregistrement...' : 'Publier la fiche'}
+                </button>
               </div>
             </div>
+            {feedback ? (
+              <p className="mb-4 text-sm text-slate-700" role="status">
+                {feedback}
+              </p>
+            ) : null}
 
-            <div className="space-y-5">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Plateforme</label>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPlatform('ios')}
-                    className={`rounded-2xl border px-4 py-3 text-left transition ${
-                      selectedPlatform === 'ios'
-                        ? 'border-rose-400 bg-rose-50 text-rose-900 shadow-sm'
-                        : 'border-slate-200 bg-white text-slate-700 hover:border-rose-200'
-                    }`}
-                  >
-                    <div className="text-sm font-semibold">iPhone / iPad</div>
-                    <div className="mt-1 text-xs text-slate-500">Liens uniques importés depuis le fichier Excel.</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPlatform('android')}
-                    className={`rounded-2xl border px-4 py-3 text-left transition ${
-                      selectedPlatform === 'android'
-                        ? 'border-rose-400 bg-rose-50 text-rose-900 shadow-sm'
-                        : 'border-slate-200 bg-white text-slate-700 hover:border-rose-200'
-                    }`}
-                  >
-                    <div className="text-sm font-semibold">Android</div>
-                    <div className="mt-1 text-xs text-slate-500">Lien fixe APK partagé pour tous les appareils Android.</div>
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                <div className="mb-2 block text-sm font-medium text-slate-700">Jeu de données iOS embarqué</div>
-                <p className="text-sm text-slate-700">
-                  {xkeyLinks.ios.length} lien(s) Apple sont chargés depuis le fichier JSON du projet.
-                </p>
-                <p className="mt-2 text-xs text-slate-500">
-                  Fichier source: <code>data/xkey-links.json</code>
-                </p>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Nom du fichier exporté</label>
-                  <input
-                    type="text"
-                    value={fileName}
-                    onChange={(event) => setFileName(event.target.value)}
-                    placeholder="xkey-mars-2026"
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition focus:border-rose-400"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Couleur du QR</label>
-                  <div className="flex items-center gap-3 rounded-2xl border border-slate-300 bg-white px-3 py-2">
-                    <input
-                      type="color"
-                      value={qrColor}
-                      onChange={(event) => setQrColor(event.target.value)}
-                      className="h-10 w-14 cursor-pointer rounded-lg border-0 bg-transparent"
-                    />
-                    <span className="font-mono text-sm text-slate-700">{qrColor}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Logo central</label>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Slug public</span>
                 <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoUpload}
-                  className="w-full text-sm text-slate-600 file:mr-4 file:rounded-xl file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:font-medium file:text-white hover:file:bg-slate-700"
+                  value={form.slug}
+                  onChange={(event) => handleFieldChange('slug', createSlug(event.target.value))}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono outline-none transition focus:border-brand"
+                  placeholder="atelier-durand"
                 />
-              </div>
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Accroche</span>
+                <input
+                  value={form.companyTagline}
+                  onChange={(event) => handleFieldChange('companyTagline', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="Une phrase d’accroche (modifiable)"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Description</span>
+                <textarea
+                  value={form.companyDescription}
+                  onChange={(event) => handleFieldChange('companyDescription', event.target.value)}
+                  className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="Quelques phrases sur l’entreprise (modifiable)"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Adresse</span>
+                <input
+                  value={form.addressLine1}
+                  onChange={(event) => handleFieldChange('addressLine1', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="12 rue des Entrepreneurs"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Complément d’adresse</span>
+                <input
+                  value={form.addressLine2}
+                  onChange={(event) => handleFieldChange('addressLine2', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="Bâtiment B, 2e étage"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Code postal</span>
+                <input
+                  value={form.postalCode}
+                  onChange={(event) => handleFieldChange('postalCode', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="75010"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Ville</span>
+                <input
+                  value={form.city}
+                  onChange={(event) => handleFieldChange('city', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="Paris"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Pays</span>
+                <input
+                  value={form.country}
+                  onChange={(event) => handleFieldChange('country', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="France"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Téléphone entreprise</span>
+                <input
+                  value={form.companyPhone}
+                  onChange={(event) => handleFieldChange('companyPhone', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="+33 1 80 00 00 00"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Email entreprise</span>
+                <input
+                  value={form.companyEmail}
+                  onChange={(event) => handleFieldChange('companyEmail', event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                  placeholder="contact@entreprise.fr"
+                />
+              </label>
+            </div>
 
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                {statusMessage}
+            <div className="mt-8 border-t border-slate-200 pt-8">
+              <h3 className="text-xl font-semibold tracking-[-0.03em]">Contact principal</h3>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Nom complet</span>
+                  <input
+                    value={form.contactFullName}
+                    onChange={(event) => handleFieldChange('contactFullName', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="Marie Durand"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Poste</span>
+                  <input
+                    value={form.contactJobTitle}
+                    onChange={(event) => handleFieldChange('contactJobTitle', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="Directrice commerciale"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Email</span>
+                  <input
+                    value={form.contactEmail}
+                    onChange={(event) => handleFieldChange('contactEmail', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="marie@entreprise.fr"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Téléphone fixe</span>
+                  <input
+                    value={form.contactPhone}
+                    onChange={(event) => handleFieldChange('contactPhone', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="+33 1 80 00 00 01"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Mobile</span>
+                  <input
+                    value={form.contactMobile}
+                    onChange={(event) => handleFieldChange('contactMobile', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="+33 6 00 00 00 00"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Site perso / landing</span>
+                  <input
+                    value={form.contactWebsite}
+                    onChange={(event) => handleFieldChange('contactWebsite', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="https://..."
+                  />
+                </label>
+                <label className="space-y-2 md:col-span-2">
+                  <span className="text-sm font-medium text-slate-700">LinkedIn</span>
+                  <input
+                    value={form.contactLinkedinUrl}
+                    onChange={(event) => handleFieldChange('contactLinkedinUrl', event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="https://www.linkedin.com/in/..."
+                  />
+                </label>
+                <label className="space-y-2 md:col-span-2">
+                  <span className="text-sm font-medium text-slate-700">Notes</span>
+                  <textarea
+                    value={form.contactNotes}
+                    onChange={(event) => handleFieldChange('contactNotes', event.target.value)}
+                    className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-brand"
+                    placeholder="Informations complémentaires visibles sur la page publique."
+                  />
+                </label>
               </div>
             </div>
           </section>
 
-          <section className="rounded-3xl border border-white/60 bg-white/90 p-6 shadow-[0_20px_80px_-30px_rgba(15,23,42,0.35)]">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">QR courant</h2>
-              <p className="text-sm text-slate-600">
-                {selectedPlatform === 'android'
-                  ? 'Le QR Android pointe vers l’APK commun.'
-                  : 'Le QR iOS affiche le lien Apple actuellement sélectionné.'}
-              </p>
+          <section className="rounded-[2rem] border border-brand-deep/30 bg-brand-deep p-6 text-white shadow-[0_25px_90px_-40px_rgba(110,27,25,0.42)]">
+            <div className="mb-5">
+              <h2 className="text-2xl font-semibold tracking-[-0.03em]">QR & exports</h2>
+              <p className="mt-1 text-sm text-slate-300">La carte exportée encode l’URL publique de la fiche.</p>
             </div>
 
-            <div className="mb-5 flex items-center justify-center">
-              <div ref={qrRef} className="relative inline-flex rounded-[2rem] bg-white p-8 shadow-inner">
-                {currentQrValue ? (
-                  <>
-                    <QRCode value={currentQrValue} size={256} fgColor={qrColor} level="H" />
-                    {logo ? (
-                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-1.5 shadow-sm">
-                        <Image
-                          src={logo}
-                          alt="Logo"
-                          width={64}
-                          height={64}
-                          unoptimized
-                          className="h-16 w-16 rounded-xl object-contain"
-                        />
+            <div
+              ref={qrCardRef}
+              className="rounded-[2rem] p-6 text-slate-950"
+              style={{ background: 'var(--gradient-card-light)' }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Carte publique</div>
+                  <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">{BRAND_COMPANY_NAME}</h3>
+                  <p className="mt-2 text-sm text-slate-600">{form.companyTagline.trim() || BRAND_DEFAULT_TAGLINE}</p>
+                </div>
+                <div className="shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2">
+                  <Image src={BRAND_LOGO_URL} alt={`Logo ${BRAND_COMPANY_NAME}`} width={64} height={64} className="h-16 w-16 object-contain" />
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-center rounded-[1.75rem] bg-white p-6 shadow-[0_20px_40px_-25px_rgba(15,23,42,0.45)]">
+                {publicUrl ? (
+                  <div className="relative inline-flex">
+                    <QRCode value={publicUrl} size={220} fgColor={BRAND_ACCENT_HEX} level="H" />
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
+                      <div className="rounded-xl border-2 border-white bg-white p-1 shadow-sm">
+                        <Image src={BRAND_LOGO_URL} alt="" width={50} height={50} className="h-[50px] w-[50px] object-contain" />
                       </div>
-                    ) : null}
-                  </>
+                    </div>
+                  </div>
                 ) : (
-                  <div className="flex h-64 w-64 items-center justify-center rounded-3xl border border-dashed border-slate-300 text-center text-sm text-slate-500">
-                    Importez un fichier iOS ou passez sur Android pour générer un QR.
+                  <div className="flex h-[220px] w-[220px] items-center justify-center rounded-[1.5rem] border border-dashed border-slate-300 text-center text-sm text-slate-500">
+                    Indique un slug public pour générer le QR.
                   </div>
                 )}
               </div>
+
+              <div className="mt-6 space-y-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">URL encodée</div>
+                  <div className="mt-2 break-all rounded-2xl bg-white px-4 py-3 font-mono text-sm text-slate-700">
+                    {publicUrl || 'L’URL publique apparaîtra ici.'}
+                  </div>
+                </div>
+                <div className="grid gap-3 rounded-[1.5rem] border border-slate-200 bg-white/70 p-4">
+                  <div className="text-sm font-medium">{form.contactFullName || 'Contact principal'}</div>
+                  <div className="text-sm text-slate-600">{form.contactJobTitle || 'Fonction'}</div>
+                  <div className="text-sm text-slate-600">{form.contactEmail || 'email@entreprise.fr'}</div>
+                  <div className="text-sm text-slate-600">{form.contactMobile || form.contactPhone || '+33 ...'}</div>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-3">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Lien encodé</div>
-                <div className="break-all font-mono text-sm text-slate-900">
-                  {currentQrValue || 'Aucun lien sélectionné'}
-                </div>
-              </div>
-
-              {selectedPlatform === 'ios' ? (
-                <div className="space-y-3">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Lien iOS sélectionné</label>
-                    <select
-                      value={selectedIosUrl ?? ''}
-                      onChange={(event) => setSelectedIosUrl(event.target.value || null)}
-                      className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-rose-400"
-                    >
-                      {iosLinks.length === 0 ? <option value="">Aucun lien importé</option> : null}
-                      {availableIosLinks.length > 0 ? (
-                        <optgroup label="Disponibles">
-                          {availableIosLinks.map((entry) => (
-                            <option key={entry.url} value={entry.url}>
-                              {entry.code || entry.url}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ) : null}
-                      {consumedIosLinks.length > 0 ? (
-                        <optgroup label="Consommés">
-                          {consumedIosLinks.map((entry) => (
-                            <option key={entry.url} value={entry.url}>
-                              {entry.code || entry.url}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ) : null}
-                    </select>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <button
-                      type="button"
-                      onClick={goToNextAvailableLink}
-                      disabled={availableIosLinks.length === 0}
-                      className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      Lien suivant disponible
-                    </button>
-                    <button
-                      type="button"
-                      onClick={markCurrentLinkAsConsumed}
-                      disabled={!currentIosEntry || Boolean(currentIosEntry.consumedAt)}
-                      className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      Marquer comme consommé
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => currentIosEntry && restoreLink(currentIosEntry.url)}
-                      disabled={!currentIosEntry || !currentIosEntry.consumedAt}
-                      className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      Remettre disponible
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-                  Android utilise le lien fixe fourni pour le téléchargement de l’APK.
-                </div>
-              )}
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={exportToPNG}
-                  disabled={!currentQrValue}
-                  className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            <div className="mt-5 grid gap-3">
+              <button
+                type="button"
+                onClick={exportToPNG}
+                disabled={!publicUrl}
+                className="rounded-full bg-white px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                Exporter en PNG
+              </button>
+              <button
+                type="button"
+                onClick={exportToPDF}
+                disabled={!publicUrl}
+                className="rounded-full bg-brand px-4 py-3 text-sm font-medium text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                Exporter en PDF
+              </button>
+              {publicUrl ? (
+                <a
+                  href={publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-full border border-white/15 px-4 py-3 text-center text-sm font-medium text-white transition hover:bg-white/10"
                 >
-                  Exporter PNG
-                </button>
-                <button
-                  type="button"
-                  onClick={exportToSVG}
-                  disabled={!currentQrValue}
-                  className="rounded-2xl bg-rose-700 px-4 py-3 text-sm font-medium text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  Exporter SVG
-                </button>
-              </div>
+                  Ouvrir la page publique
+                </a>
+              ) : null}
             </div>
           </section>
 
-          <section className="rounded-3xl border border-white/60 bg-slate-950 p-6 text-white shadow-[0_20px_80px_-30px_rgba(15,23,42,0.45)]">
-            <div className="mb-5 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold">Suivi des liens iOS</h2>
-                <p className="text-sm text-slate-300">Persisté localement dans le navigateur utilisé.</p>
-              </div>
-              <button
-                type="button"
-                onClick={exportConsumedLinks}
-                className="rounded-2xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-rose-100"
-              >
-                Export CSV consommés
-              </button>
+          <section className="rounded-[2rem] border border-white/70 bg-white/80 p-6 shadow-[0_25px_90px_-40px_rgba(15,23,42,0.5)] backdrop-blur">
+            <div className="mb-5">
+              <h2 className="text-2xl font-semibold tracking-[-0.03em]">Fiches récentes</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Clique une fiche pour la modifier. Utilise « Nouvelle fiche » dans le formulaire pour en créer une autre.
+              </p>
             </div>
 
-            <div className="mb-5 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl bg-white/8 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Total</div>
-                <div className="mt-2 text-3xl font-semibold">{iosLinks.length}</div>
+            {!supabaseReady ? (
+              <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                Ajoute `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_ANON_KEY`, puis redémarre le serveur Next.
               </div>
-              <div className="rounded-2xl bg-emerald-400/10 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-emerald-300">Disponibles</div>
-                <div className="mt-2 text-3xl font-semibold text-emerald-200">{availableIosLinks.length}</div>
+            ) : isLoadingCards ? (
+              <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                Chargement des fiches...
               </div>
-              <div className="rounded-2xl bg-rose-400/10 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-rose-200">Consommés</div>
-                <div className="mt-2 text-3xl font-semibold text-rose-100">{consumedIosLinks.length}</div>
+            ) : recentCards.length === 0 ? (
+              <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                Aucune fiche enregistrée pour le moment.
               </div>
-            </div>
-
-            <div className="max-h-[26rem] space-y-3 overflow-auto pr-1">
-              {iosLinks.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/20 p-4 text-sm text-slate-300">
-                  Aucun lien iOS importé pour le moment.
-                </div>
-              ) : (
-                iosLinks.map((entry) => (
-                  <div
-                    key={entry.url}
-                    className={`rounded-2xl border p-4 ${
-                      entry.consumedAt
-                        ? 'border-rose-400/30 bg-rose-400/10'
-                        : 'border-white/10 bg-white/6'
-                    }`}
+            ) : (
+              <div className="space-y-3">
+                {recentCards.map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => loadCardIntoForm(card)}
+                    className="w-full rounded-[1.5rem] border border-slate-200 bg-white p-4 text-left transition hover:border-brand hover:bg-brand-soft"
                   >
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-white">
-                          {entry.code || 'Lien sans code détecté'}
-                        </div>
-                        <div className="mt-1 break-all font-mono text-xs text-slate-300">{entry.url}</div>
+                        <div className="truncate text-base font-semibold text-slate-900">{card.company_name}</div>
+                        <div className="mt-1 truncate font-mono text-xs text-slate-500">{card.slug}</div>
                       </div>
                       <div
-                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                          entry.consumedAt ? 'bg-rose-200 text-rose-900' : 'bg-emerald-200 text-emerald-900'
-                        }`}
-                      >
-                        {entry.consumedAt ? 'Consommé' : 'Disponible'}
-                      </div>
+                        className="h-4 w-4 rounded-full border border-slate-200"
+                        style={{ backgroundColor: BRAND_ACCENT_HEX }}
+                      />
                     </div>
-                    {entry.consumedAt ? (
-                      <div className="mt-3 text-xs text-slate-300">
-                        Consommé le {new Date(entry.consumedAt).toLocaleString('fr-FR')}
-                      </div>
-                    ) : null}
-                  </div>
-                ))
-              )}
-            </div>
+                    <div className="mt-3 text-sm text-slate-600">
+                      {card.city || card.country ? [card.city, card.country].filter(Boolean).join(', ') : 'Sans localisation'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
