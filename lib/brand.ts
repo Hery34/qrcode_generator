@@ -21,6 +21,17 @@ export const BRAND_DEFAULT_DESCRIPTION =
  */
 export const BRAND_ACCENT_HEX = '#CD2927';
 
+/** Même teinte en `rgb()` — utile pour le SVG du QR (capture html-to-image / parseurs sans `lab()`) */
+export const BRAND_ACCENT_RGB = (() => {
+  const hex = BRAND_ACCENT_HEX.replace(/^#/, '');
+  const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
+  const n = Number.parseInt(full, 16);
+  if (!Number.isFinite(n) || full.length !== 6) {
+    return 'rgb(205, 41, 39)';
+  }
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+})();
+
 export const BRAND_ACCENT_HOVER_HEX = '#E04A48';
 export const BRAND_INK_HEX = '#8F221F';
 export const BRAND_DEEP_HEX = '#6E1B19';

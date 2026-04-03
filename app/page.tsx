@@ -3,10 +3,9 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import QRCode from 'react-qr-code';
 import { toPng } from 'html-to-image';
-import { jsPDF } from 'jspdf';
-import Image from 'next/image';
 import {
   BRAND_ACCENT_HEX,
+  BRAND_ACCENT_RGB,
   BRAND_COMPANY_NAME,
   BRAND_DEFAULT_DESCRIPTION,
   BRAND_DEFAULT_TAGLINE,
@@ -329,6 +328,7 @@ export default function Home() {
       cacheBust: true,
       pixelRatio: 2,
       backgroundColor: '#f8fafc',
+      skipFonts: true,
     });
   };
 
@@ -355,6 +355,7 @@ export default function Home() {
 
     try {
       const dataUrl = await captureQrCardPng();
+      const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
@@ -597,63 +598,173 @@ export default function Home() {
 
             <div
               ref={qrCardRef}
-              className="rounded-[2rem] p-6 text-slate-950"
-              style={{ background: 'linear-gradient(180deg, #fafafa 0%, #fff5f5 100%)' }}
+              style={{
+                borderRadius: '2rem',
+                padding: 24,
+                background: 'linear-gradient(180deg, rgb(250, 250, 250) 0%, rgb(255, 245, 245) 100%)',
+                color: 'rgb(15, 23, 42)',
+                fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+              }}
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Carte publique</div>
-                  <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">{BRAND_COMPANY_NAME}</h3>
-                  <p className="mt-2 text-sm text-slate-600">{form.companyTagline.trim() || BRAND_DEFAULT_TAGLINE}</p>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: '0.24em',
+                      textTransform: 'uppercase',
+                      color: 'rgb(100, 116, 139)',
+                    }}
+                  >
+                    Carte publique
+                  </div>
+                  <h3
+                    style={{
+                      margin: '12px 0 0',
+                      fontSize: '1.5rem',
+                      fontWeight: 600,
+                      letterSpacing: '-0.04em',
+                      color: 'rgb(15, 23, 42)',
+                    }}
+                  >
+                    {BRAND_COMPANY_NAME}
+                  </h3>
+                  <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.6, color: 'rgb(71, 85, 105)' }}>
+                    {form.companyTagline.trim() || BRAND_DEFAULT_TAGLINE}
+                  </p>
                 </div>
-                <div className="shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2">
-                  <Image
+                <div
+                  style={{
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                    borderRadius: '1rem',
+                    border: '1px solid rgb(226, 232, 240)',
+                    backgroundColor: 'rgb(255, 255, 255)',
+                    padding: 8,
+                  }}
+                >
+                  <img
                     src={BRAND_LOGO_URL}
                     alt={`Logo ${BRAND_COMPANY_NAME}`}
                     width={64}
                     height={64}
-                    unoptimized
-                    className="h-16 w-16 object-contain"
+                    style={{ width: 64, height: 64, objectFit: 'contain', display: 'block' }}
                   />
                 </div>
               </div>
 
-              <div className="mt-6 flex justify-center rounded-[1.75rem] bg-white p-6 shadow-[0_20px_40px_-25px_rgba(15,23,42,0.45)]">
+              <div
+                style={{
+                  marginTop: 24,
+                  display: 'flex',
+                  justifyContent: 'center',
+                  borderRadius: '1.75rem',
+                  backgroundColor: 'rgb(255, 255, 255)',
+                  padding: 24,
+                  boxShadow: '0 20px 40px -25px rgba(15, 23, 42, 0.45)',
+                }}
+              >
                 {publicUrl ? (
-                  <div className="relative inline-flex">
-                    <QRCode value={publicUrl} size={220} fgColor={BRAND_ACCENT_HEX} level="H" />
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
-                      <div className="rounded-xl border-2 border-white bg-white p-1 shadow-sm">
-                        <Image
+                  <div style={{ position: 'relative', display: 'inline-flex' }}>
+                    <QRCode value={publicUrl} size={220} fgColor={BRAND_ACCENT_RGB} level="H" />
+                    <div
+                      style={{
+                        pointerEvents: 'none',
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      aria-hidden
+                    >
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          border: '2px solid rgb(255, 255, 255)',
+                          backgroundColor: 'rgb(255, 255, 255)',
+                          padding: 4,
+                          boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
+                        }}
+                      >
+                        <img
                           src={BRAND_LOGO_URL}
                           alt=""
                           width={50}
                           height={50}
-                          unoptimized
-                          className="h-[50px] w-[50px] object-contain"
+                          style={{ width: 50, height: 50, objectFit: 'contain', display: 'block' }}
                         />
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex h-[220px] w-[220px] items-center justify-center rounded-[1.5rem] border border-dashed border-slate-300 text-center text-sm text-slate-500">
+                  <div
+                    style={{
+                      display: 'flex',
+                      width: 220,
+                      height: 220,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '1.5rem',
+                      border: '1px dashed rgb(203, 213, 225)',
+                      textAlign: 'center',
+                      fontSize: 14,
+                      color: 'rgb(100, 116, 139)',
+                    }}
+                  >
                     Indique un slug public pour générer le QR.
                   </div>
                 )}
               </div>
 
-              <div className="mt-6 space-y-4">
+              <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">URL encodée</div>
-                  <div className="mt-2 break-all rounded-2xl bg-white px-4 py-3 font-mono text-sm text-slate-700">
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: '0.2em',
+                      textTransform: 'uppercase',
+                      color: 'rgb(100, 116, 139)',
+                    }}
+                  >
+                    URL encodée
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      wordBreak: 'break-all',
+                      borderRadius: '1rem',
+                      backgroundColor: 'rgb(255, 255, 255)',
+                      padding: '12px 16px',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      fontSize: 14,
+                      color: 'rgb(51, 65, 85)',
+                    }}
+                  >
                     {publicUrl || 'L’URL publique apparaîtra ici.'}
                   </div>
                 </div>
-                <div className="grid gap-3 rounded-[1.5rem] border border-slate-200 bg-white/70 p-4">
-                  <div className="text-sm font-medium">{form.contactFullName || 'Contact principal'}</div>
-                  <div className="text-sm text-slate-600">{form.contactJobTitle || 'Fonction'}</div>
-                  <div className="text-sm text-slate-600">{form.contactEmail || 'email@entreprise.fr'}</div>
-                  <div className="text-sm text-slate-600">{form.contactMobile || form.contactPhone || '+33 ...'}</div>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    borderRadius: '1.5rem',
+                    border: '1px solid rgb(226, 232, 240)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+                    padding: 16,
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 500, color: 'rgb(15, 23, 42)' }}>
+                    {form.contactFullName || 'Contact principal'}
+                  </div>
+                  <div style={{ fontSize: 14, color: 'rgb(71, 85, 105)' }}>{form.contactJobTitle || 'Fonction'}</div>
+                  <div style={{ fontSize: 14, color: 'rgb(71, 85, 105)' }}>{form.contactEmail || 'email@entreprise.fr'}</div>
+                  <div style={{ fontSize: 14, color: 'rgb(71, 85, 105)' }}>
+                    {form.contactMobile || form.contactPhone || '+33 ...'}
+                  </div>
                 </div>
               </div>
             </div>
