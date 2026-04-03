@@ -29,7 +29,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   return {
-    title: `${BRAND_COMPANY_NAME} — Fiche publique`,
+    title: `${BRAND_COMPANY_NAME} — Carte de visite`,
     description: (() => {
       const raw =
         card.company_tagline?.trim() ||
