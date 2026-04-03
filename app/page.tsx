@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import QRCode from 'react-qr-code';
-import html2canvas from 'html2canvas';
+import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import Image from 'next/image';
 import {
@@ -310,19 +310,42 @@ export default function Home() {
     setFeedback('Nouvelle fiche : indique un slug public distinct pour créer une autre carte.');
   };
 
+  const downloadDataUrl = (dataUrl: string, fileName: string) => {
+    const link = document.createElement('a');
+    link.download = fileName;
+    link.href = dataUrl;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  const captureQrCardPng = () => {
+    const el = qrCardRef.current;
+    if (!el) {
+      throw new Error('Élément carte introuvable.');
+    }
+    return toPng(el, {
+      cacheBust: true,
+      pixelRatio: 2,
+      backgroundColor: '#f8fafc',
+    });
+  };
+
   const exportToPNG = async () => {
     if (!qrCardRef.current || !publicUrl) {
       return;
     }
 
-    const canvas = await html2canvas(qrCardRef.current, {
-      backgroundColor: '#f8fafc',
-      scale: 2,
-    });
-    const link = document.createElement('a');
-    link.download = `${sanitizeFileName(form.slug || 'carte-qr')}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    try {
+      const dataUrl = await captureQrCardPng();
+      downloadDataUrl(dataUrl, `${sanitizeFileName(form.slug || 'carte-qr')}.png`);
+    } catch (err) {
+      console.error(err);
+      setFeedback(
+        err instanceof Error ? `Export PNG impossible : ${err.message}` : 'Export PNG impossible.',
+      );
+    }
   };
 
   const exportToPDF = async () => {
@@ -330,26 +353,29 @@ export default function Home() {
       return;
     }
 
-    const canvas = await html2canvas(qrCardRef.current, {
-      backgroundColor: '#f8fafc',
-      scale: 2,
-    });
+    try {
+      const dataUrl = await captureQrCardPng();
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
 
-    const imageData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-    });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const props = pdf.getImageProperties(dataUrl);
+      const imageWidth = pageWidth - 24;
+      const imageHeight = (props.height * imageWidth) / props.width;
+      const imageY = Math.max(16, (pageHeight - imageHeight) / 2);
 
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const imageWidth = pageWidth - 24;
-    const imageHeight = (canvas.height * imageWidth) / canvas.width;
-    const imageY = Math.max(16, (pageHeight - imageHeight) / 2);
-
-    pdf.addImage(imageData, 'PNG', 12, imageY, imageWidth, imageHeight);
-    pdf.save(`${sanitizeFileName(form.slug || 'carte-qr')}.pdf`);
+      pdf.addImage(dataUrl, 'PNG', 12, imageY, imageWidth, imageHeight);
+      pdf.save(`${sanitizeFileName(form.slug || 'carte-qr')}.pdf`);
+    } catch (err) {
+      console.error(err);
+      setFeedback(
+        err instanceof Error ? `Export PDF impossible : ${err.message}` : 'Export PDF impossible.',
+      );
+    }
   };
 
   return (
@@ -572,7 +598,7 @@ export default function Home() {
             <div
               ref={qrCardRef}
               className="rounded-[2rem] p-6 text-slate-950"
-              style={{ background: 'var(--gradient-card-light)' }}
+              style={{ background: 'linear-gradient(180deg, #fafafa 0%, #fff5f5 100%)' }}
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -581,7 +607,14 @@ export default function Home() {
                   <p className="mt-2 text-sm text-slate-600">{form.companyTagline.trim() || BRAND_DEFAULT_TAGLINE}</p>
                 </div>
                 <div className="shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2">
-                  <Image src={BRAND_LOGO_URL} alt={`Logo ${BRAND_COMPANY_NAME}`} width={64} height={64} className="h-16 w-16 object-contain" />
+                  <Image
+                    src={BRAND_LOGO_URL}
+                    alt={`Logo ${BRAND_COMPANY_NAME}`}
+                    width={64}
+                    height={64}
+                    unoptimized
+                    className="h-16 w-16 object-contain"
+                  />
                 </div>
               </div>
 
@@ -591,7 +624,14 @@ export default function Home() {
                     <QRCode value={publicUrl} size={220} fgColor={BRAND_ACCENT_HEX} level="H" />
                     <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
                       <div className="rounded-xl border-2 border-white bg-white p-1 shadow-sm">
-                        <Image src={BRAND_LOGO_URL} alt="" width={50} height={50} className="h-[50px] w-[50px] object-contain" />
+                        <Image
+                          src={BRAND_LOGO_URL}
+                          alt=""
+                          width={50}
+                          height={50}
+                          unoptimized
+                          className="h-[50px] w-[50px] object-contain"
+                        />
                       </div>
                     </div>
                   </div>
